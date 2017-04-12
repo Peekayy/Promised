@@ -1,6 +1,7 @@
 var should = require("chai").should();
 var Qed = require("../");
 var Q = require("q");
+var url = require("url");
 
 
 var values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
@@ -42,7 +43,7 @@ describe("Qed", function() {
             }).done(done);
         });
 
-        it("should have limited concurrent workers", function(done) {
+        it("should have limited concurrent workers", function() {
 
             var tasks = [];
 
@@ -64,35 +65,38 @@ describe("Qed", function() {
 
             var limit = 10;
 
-            Qed.allLimit(tasks, limit).then(function() {
+            return Qed.allLimit(tasks, limit).then(function() {
                 Math.max.apply(null, workersCounter.history).should.equal(limit);
-            }).done(done);
+            });
         });
     });
     describe("#retry()", function() {
-        it("should succeed after trying 10 times", function(done) {
-
+        it("should succeed after trying 10 times", function() {
             var nbAttempts = 0;
-
-            Qed.tryPromise(function() {
+            return Qed.tryPromise(function() {
                 if (nbAttempts++ < 10) {
-                    throw new Error("Not ready yet");
+                    return Promise.reject(new Error("Not ready yet"));
                 }
-            }, null, 10).done(done);
+            }, null, 10);
         });
 
-        it("should retry until success", function(done) {
+        it("should retry until success", function() {
 
             var ctx = {ready: false};
             setTimeout(function() {
                 ctx.ready = true;
             }, 1800);
 
-            Qed.tryPromise(function() {
+            return Qed.tryPromise(function() {
                 if (!ctx.ready) {
-                    throw new Error("Not ready yet");
+                    return Promise.reject(new Error("Not ready yet"));
                 }
-            }, null, null, 100).done(done);
+            }, null, null, 100);
         });
     });
+    describe("#httpGet", function() {
+        it("should succeed to request GET http://eu.httpbin.org/", function() {
+            return Qed.httpGET(url.parse("http://eu.httpbin.org"));
+        });
+    })
 });
