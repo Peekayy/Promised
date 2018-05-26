@@ -160,7 +160,7 @@ module.exports = (function() {
                 return Qed.httpResponseHandler.simpleData(res).then(Qed.parseXml);
             },
             headers: function(res) {
-                return res.headers;
+                return Q(res.headers);
             },
             hls: function(mode, baseUrl) {
                 return function(res) {
@@ -230,14 +230,19 @@ module.exports = (function() {
                         res.pipe(tsFile);
                     }
 
-                    return deferred.promise;
-                }
+                return deferred.promise;
             }
         },
-        md5sum: function(filepath) {
-            var deferred = Q.defer();
-            var stream = fs.ReadStream(filepath);
-            var md5 = Crypto.createHash("md5");
+    errorStatus: function(res) {
+            return {
+                status: res.statusCode,
+                message: res.statusMessage
+            };
+        }},
+    md5sum: function(filepath) {
+        var deferred = Q.defer();
+        var stream = fs.ReadStream(filepath);
+        var md5 = Crypto.createHash("md5");
 
             stream.on("data", function(data) {
                 md5.update(data);
@@ -394,7 +399,7 @@ module.exports = (function() {
             return deferred.promise;
         }
     } catch (e) {
-        Qed.httpResponseHandler.prompt = function() {
+        Qed.httpResponseHandler.m3u8 = function() {
             throw new Error("Missing peer dependency 'm3u8'");
         }
     }
@@ -418,7 +423,7 @@ module.exports = (function() {
             return deferred.promise;
         };
     } catch (e) {
-        Qed.prompt = function() {
+        Qed.parseXml = function() {
             throw new Error("Missing peer dependency 'xml2js'");
         }
     }
