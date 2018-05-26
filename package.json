@@ -1,14 +1,14 @@
 {
-  "name": "Qed",
-  "version": "1.0.1",
+  "name": "Promised",
+  "version": "2.0.0",
   "author": "Gaël BOUGANNE <peekayy.dev@gmail.com> (https://github.com/Peekayy)",
-  "description": "Helper functions based on kriskowal/q.",
-  "homepage": "https://github.com/Peekayy/Qed",
+  "description": "Promise functions toolbox.",
+  "homepage": "https://github.com/Peekayy/Promised",
   "license": "MIT",
   "dependencies": {
-    "q": "^1.1.2"
+    "grunt-cli": "^1.2.0"
   },
-  "main": "./Qed.js",
+  "main": "./Promised.js",
   "devDependencies": {
     "chai": "^2.1.2",
     "grunt": "^0.4.5",

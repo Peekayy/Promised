@@ -1,18 +1,18 @@
 module.exports = (function() {
-    var http = require("http");
-    var https = require("https");
-    var extend = require("util")._extend;
-    var querystring = require("querystring");
-    var fs = require("fs");
-    var Crypto = require("crypto");
-    var path = require("path");
-    var url = require("url");
-    var Q = require("q");
-    var Qed;
+    const http = require("http");
+    const https = require("https");
+    const util = require("util");
+    const extend = util._extend;
+    const querystring = require("querystring");
+    const fs = require("fs");
+    const Crypto = require("crypto");
+    const path = require("path");
+    const url = require("url");
+    let Promised;
 
     function debug() {
-        if (Qed.logger.debug) {
-            Qed.logger.debug.apply(Qed.logger.debug, arguments);
+        if (Promised.logger.debug) {
+            Promised.logger.debug.apply(Promised.logger.debug, arguments);
         }
     }
 
@@ -24,18 +24,30 @@ module.exports = (function() {
      * @private
      */
     function httpReq(method, reqParams, data) {
-        var deferred = Q.defer();
-        var proxy = process.env.http_proxy || process.env.HTTP_PROXY;
+        const deferred = Promised.defer();
+        const proxy = process.env.http_proxy || process.env.HTTP_PROXY;
         if (proxy) {
-            var proxyUrl = url.parse(proxy);
-            var path = reqParams.protocol + "//" + reqParams.host + reqParams.path;
+            const proxyUrl = url.parse(proxy);
+            const path = reqParams.protocol + "//" + reqParams.host + reqParams.path;
             extend(reqParams, proxyUrl);
             reqParams.path = path;
         }
 
-        var req = http.request(extend({method: method, port: 80}, reqParams), function(res) {
+        let requester;
+        if (reqParams.protocol === "http:") {
+            requester = http;
+        } else if (reqParams.protocol === "https:") {
+            requester = https;
+        } else {
+            return Promise.reject(`Unsupported protocol '${reqParams.protocol}'`);
+        }
+
+        const req = requester.request(extend({method: method}, reqParams), function(res) {
             if (res.statusCode < 200 || res.statusCode >= 300) {
-                deferred.reject(new Error(res.statusCode + " - " + res.statusMessage));
+                deferred.reject({
+                    status: res.statusCode,
+                    message: res.statusMessage
+                });
             } else {
                 deferred.resolve(res);
             }
@@ -66,73 +78,23 @@ module.exports = (function() {
         return deferred.promise;
     }
 
-    /**
-     * @param {String} method
-     * @param {URL} reqParams
-     * @param {Object} data
-     * @return {Promise}
-     * @private
-     */
-    function httpsReq(method, reqParams, data) {
-        var deferred = Q.defer();
-        var req = https.request(extend({method: method, port: 443}, reqParams), function(res) {
-            if (res.statusCode < 200 || res.statusCode >= 300) {
-                deferred.reject(res);
-            } else {
-                deferred.resolve(res);
-            }
-        });
-
-        req.on("error", function(err) {
-            deferred.reject(err);
-        });
-
-        if (!data) {
-            req.end();
-        } else {
-            switch (typeof data) {
-                case "string" :
-                    req.write(data);
-                    req.end();
-                    break;
-                default:
-                    if (data instanceof fs.ReadStream) {
-                        data.pipe(req);
-                    } else {
-                        req.write(querystring.stringify(data));
-                        req.end();
-                    }
-                    break;
-            }
-        }
-        return deferred.promise;
-    }
-
-
-    Qed = {
+    Promised = {
         logger: console,
-        Q: Q,
         httpGET: function(reqParams) {
             return httpReq("GET", reqParams);
         },
         httpPOST: function(reqParams, data) {
             return httpReq("POST", reqParams, data);
         },
-        httpsHEAD: function(reqParams) {
-            return httpsReq("HEAD", reqParams);
+        httpHEAD: function(reqParams) {
+            return httpReq("HEAD", reqParams);
         },
-        httpsGET: function(reqParams) {
-            return httpsReq("GET", reqParams);
-        },
-        httpsPOST: function(reqParams, data) {
-            return httpsReq("POST", reqParams, data);
-        },
-        httpsPUT: function(reqParams, data) {
-            return httpsReq("PUT", reqParams, data);
+        httpPUT: function(reqParams, data) {
+            return httpReq("PUT", reqParams, data);
         },
         httpResponseHandler: {
             simpleData: function(res) {
-                var data = "", deferred = Q.defer();
+                let data = "", deferred = Promised.defer();
                 res.on('data', function(chunk) {
                     data += chunk;
                 });
@@ -142,7 +104,7 @@ module.exports = (function() {
                 return deferred.promise;
             },
             buffer: function(res) {
-                var buffers = [], deferred = Q.defer();
+                const buffers = [], deferred = Promised.defer();
                 res.on('data', function(chunk) {
                     buffers.push(chunk);
                 });
@@ -152,23 +114,21 @@ module.exports = (function() {
                 return deferred.promise;
             },
             json: function(res) {
-                return Qed.httpResponseHandler.simpleData(res).then(function(data) {
-                    return JSON.parse(data);
-                });
+                return Promised.httpResponseHandler.simpleData(res).then(data => JSON.parse(data));
             },
             xml: function(res) {
-                return Qed.httpResponseHandler.simpleData(res).then(Qed.parseXml);
+                return Promised.httpResponseHandler.simpleData(res).then(Promised.parseXml);
             },
             headers: function(res) {
-                return Q(res.headers);
+                return Promise.resolve(res.headers);
             },
             hls: function(mode, baseUrl) {
                 return function(res) {
-                    return Qed.httpResponseHandler.m3u8(res).then(function(m3u) {
+                    return Promised.httpResponseHandler.m3u8(res).then(function(m3u) {
                         m3u.items.StreamItem.sort(function(a, b) {
                             return parseInt(a.attributes.attributes.bandwidth) - parseInt(b.attributes.attributes.bandwidth);
                         });
-                        var selectedStreams;
+                        let selectedStreams;
                         switch (mode) {
                             case "STREAMS":
                                 // returns only streams infos
@@ -193,24 +153,24 @@ module.exports = (function() {
                             return chain.then(function() {
                                 return url.parse(stream.properties.uri);
                             }).then(function(streamUrl) {
-                                return Qed.httpGET({
+                                return Promised.httpGET({
                                     hostname: streamUrl.hostname || (baseUrl && baseUrl.hostname),
                                     path: (baseUrl && baseUrl.path || "") + streamUrl.path
                                 });
-                            }).then(Qed.httpResponseHandler.m3u8).then(function(m3u) {
+                            }).then(Promised.httpResponseHandler.m3u8).then(m3u => {
                                 stream.content = m3u;
                                 return stream;
                             });
-                        }, Q()).thenResolve(selectedStreams);
+                        }, Promise.resolve()).then(_ => selectedStreams);
 
                     });
                 }
             },
             pipeToFile: function(path) {
                 return function(res) {
-                    var deferred = Q.defer();
+                    const deferred = Promised.defer();
 
-                    var tsFile = fs.createWriteStream(path);
+                    const tsFile = fs.createWriteStream(path);
 
                     tsFile.on("finish", function() {
                         tsFile.close();
@@ -230,19 +190,14 @@ module.exports = (function() {
                         res.pipe(tsFile);
                     }
 
-                return deferred.promise;
+                    return deferred.promise;
+                }
             }
         },
-    errorStatus: function(res) {
-            return {
-                status: res.statusCode,
-                message: res.statusMessage
-            };
-        }},
-    md5sum: function(filepath) {
-        var deferred = Q.defer();
-        var stream = fs.ReadStream(filepath);
-        var md5 = Crypto.createHash("md5");
+        md5sum: function(filepath) {
+            const deferred = Promised.defer();
+            const stream = fs.ReadStream(filepath);
+            const md5 = Crypto.createHash("md5");
 
             stream.on("data", function(data) {
                 md5.update(data);
@@ -254,46 +209,46 @@ module.exports = (function() {
             return deferred.promise;
         },
         allLimit: function(tasks, limit) {
-            var queues = [];
-            var results = [];
+            const queues = [];
+            const results = [];
 
-            for (var i = 0; i < tasks.length; i++) {
+            for (let i = 0; i < tasks.length; i++) {
                 if (!queues[i % limit]) {
                     queues[i % limit] = [];
                 }
                 queues[i % limit].push(tasks[i]);
             }
 
-            return Q.allSettled(queues.map(function(queue, queueIndex) {
+            return Promise.all(queues.map(function(queue, queueIndex) {
                 return queue.reduce(function(chain, task, i) {
                     return chain.then(task).then(function(result) {
                         results[i * limit + queueIndex] = result;
                     });
-                }, Q());
-            })).thenResolve(results);
+                }, Promise.resolve());
+            })).then(_ => results);
         },
         downloadFiles: function(urls, filenames, targetFolder, maxParallelDownloads) {
             if (!filenames) {
                 filenames = [];
             }
-            var queues = [];
+            const queues = [];
 
-            for (var i = 0; i < urls.length; i++) {
+            for (let i = 0; i < urls.length; i++) {
                 if (!queues[i % maxParallelDownloads]) {
                     queues[i % maxParallelDownloads] = [];
                 }
                 queues[i % maxParallelDownloads].push({url: urls[i], filename: filenames[i], index: i});
             }
-            return Q.allSettled(queues.map(function(queue) {
+            return Promised.all(queues.map(function(queue) {
                 return queue.reduce(function(chain, item) {
                     return chain.then(function() {
-                        return Qed.downloadFile(item.url, item.filename, targetFolder);
+                        return Promised.downloadFile(item.url, item.filename, targetFolder);
                     }).then(function(filename) {
                         item.filename = filename;
                     }).catch(function(err) {
                         item.error = err;
                     });
-                }, Q());
+                }, Promise.resolve());
             })).then(function() {
                 return queues.reduce(function(array, queue) {
                     return array.concat(queue);
@@ -310,35 +265,35 @@ module.exports = (function() {
                 filename = targetFolder + path.sep + filename;
             }
 
-            return Qed.tryPromise(Qed.httpGET, [{
+            return Promised.tryPromise(Promised.httpGET, [{
                 hostname: url.host,
                 path: url.path
-            }], 10).then(Qed.httpResponseHandler.pipeToFile(filename));
+            }], 10).then(Promised.httpResponseHandler.pipeToFile(filename));
         },
         fs: {
-            mkdir: Q.denodeify(fs.mkdir),
-            unlink: Q.denodeify(fs.unlink),
-            rmdir: Q.denodeify(fs.rmdir),
-            readdir: Q.denodeify(fs.readdir),
-            open: Q.denodeify(fs.open),
-            write: Q.denodeify(fs.write),
-            writeFile: Q.denodeify(fs.writeFile),
-            readFile: Q.denodeify(fs.readFile),
-            close: Q.denodeify(fs.close),
-            stat: Q.denodeify(fs.stat),
-            chmod: Q.denodeify(fs.chmod),
+            mkdir: util.promisify(fs.mkdir),
+            unlink: util.promisify(fs.unlink),
+            rmdir: util.promisify(fs.rmdir),
+            readdir: util.promisify(fs.readdir),
+            open: util.promisify(fs.open),
+            write: util.promisify(fs.write),
+            writeFile: util.promisify(fs.writeFile),
+            readFile: util.promisify(fs.readFile),
+            close: util.promisify(fs.close),
+            stat: util.promisify(fs.stat),
+            chmod: util.promisify(fs.chmod),
             removeDirAndContents: function(dir) {
-                return Qed.fs.readdir(dir).then(function(files) {
-                    return Q.all(files.map(function(file) {
-                        return Qed.fs.unlink(dir + path.sep + file);
+                return Promised.fs.readdir(dir).then(function(files) {
+                    return Promise.all(files.map(function(file) {
+                        return Promised.fs.unlink(dir + path.sep + file);
                     }));
                 }).then(function() {
-                    return Qed.fs.rmdir(dir);
+                    return Promised.fs.rmdir(dir);
                 });
             }
         },
         tryPromise: function(f, args, maxTries, delay) {
-            return Q.fapply(f, args).catch(function(err) {
+            return (f(args) || Promise.resolve()).catch(function(err) {
                 debug("Error occurred", err);
                 if (maxTries || maxTries === 0) {
                     debug("Left attempts : " + maxTries);
@@ -346,8 +301,8 @@ module.exports = (function() {
                     debug("Retrying...");
                 }
                 if (maxTries || typeof maxTries !== "number") {
-                    return Q.delay(null, delay || 0).then(function() {
-                        return Qed.tryPromise(f, args, maxTries ? maxTries - 1 : null, delay);
+                    return Promised.delay(delay || 0).then(function() {
+                        return Promised.tryPromise(f, args, maxTries ? maxTries - 1 : null, delay);
                     });
                 } else {
                     return Promise.reject(err);
@@ -355,18 +310,33 @@ module.exports = (function() {
             });
         },
         yql: function(query) {
-            var queryUrl = url.parse("https://query.yahooapis.com/v1/public/yql?q=" + encodeURIComponent(query) + "&format=json&callback=");
-            return Qed.httpsGET(queryUrl).then(Qed.httpResponseHandler.json, function(res) {
+            let queryUrl = url.parse("https://query.yahooapis.com/v1/public/yql?q=" + encodeURIComponent(query) + "&format=json&callback=");
+            return Promised.httpsGET(queryUrl).then(Promised.httpResponseHandler.json, (res) => {
                 throw new Error(res.statusCode + " - " + res.statusMessage);
             });
+        },
+        defer: function() {
+            let deferred = {};
+            deferred.promise = new Promise((resolve, reject) => {
+                deferred.resolve = resolve;
+                deferred.reject = reject;
+            });
+            return deferred;
+        },
+        delay: function(delay) {
+            const deferred = Promised.defer();
+            setTimeout(_ => {
+                deferred.resolve();
+            }, delay);
+            return deferred.promise;
         }
     };
 
     try {
-        var prompt = require("prompt");
-        Qed.prompt = function(fields) {
+        const prompt = require("prompt");
+        Promised.prompt = function(fields) {
             prompt.start();
-            var deferred = Q.defer();
+            const deferred = Promised.defer();
             prompt.get(fields, function(err, results) {
                 if (err) {
                     deferred.reject(err);
@@ -377,19 +347,19 @@ module.exports = (function() {
             return deferred.promise;
         }
     } catch (e) {
-        Qed.prompt = function() {
+        Promised.prompt = function() {
             throw new Error("Missing peer dependency 'prompt'");
         }
     }
 
     try {
-        var m3u8 = require("m3u8");
-        Qed.httpResponseHandler.m3u8 = function(res) {
-            var deferred = Q.defer();
+        const m3u8 = require("m3u8");
+        Promised.httpResponseHandler.m3u8 = function(res) {
+            const deferred = Promised.defer();
             if (res.statusCode !== 200) {
                 deferred.reject("Couldn't get m3u8 playlist : " + res.statusCode);
             } else {
-                var parser = m3u8.createStream();
+                const parser = m3u8.createStream();
                 res.pipe(parser);
 
                 parser.on("m3u", function(m3u) {
@@ -399,20 +369,20 @@ module.exports = (function() {
             return deferred.promise;
         }
     } catch (e) {
-        Qed.httpResponseHandler.m3u8 = function() {
+        Promised.httpResponseHandler.m3u8 = function() {
             throw new Error("Missing peer dependency 'm3u8'");
         }
     }
 
     try {
-        var xml2js = require("xml2js").Parser({
+        const xml2js = require("xml2js").Parser({
             normalizeTags: true,
             explicitArray: false,
             trim: true,
             normalize: true
         });
-        Qed.parseXml = function(string) {
-            var deferred = Q.defer();
+        Promised.parseXml = function(string) {
+            const deferred = Promised.defer();
             xml2js.parseString(string, function(err, result) {
                 if (err) {
                     deferred.reject(err);
@@ -423,11 +393,11 @@ module.exports = (function() {
             return deferred.promise;
         };
     } catch (e) {
-        Qed.parseXml = function() {
+        Promised.parseXml = function() {
             throw new Error("Missing peer dependency 'xml2js'");
         }
     }
 
-    return Qed;
+    return Promised;
 
 })();

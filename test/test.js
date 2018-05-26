@@ -1,11 +1,10 @@
-var should = require("chai").should();
-var Qed = require("../");
-var Q = require("q");
-var url = require("url");
+require("chai").should();
+const Promised = require("../");
+const url = require("url");
 
 
-var values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
-var workersCounter = {
+const values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+const workersCounter = {
     count: 0,
     history: [],
     inc: function() {
@@ -18,85 +17,99 @@ var workersCounter = {
     }
 };
 
-describe("Qed", function() {
+describe("Promised", function() {
     describe("#allLimit()", function() {
 
         it("should return an array of results in the same order", function(done) {
-            var tasks = [];
+            const tasks = [];
 
             function createTask(value) {
                 return function() {
-                    var deferred = Q.defer();
-                    setTimeout(function() {
-                        deferred.resolve(value);
-                    }, Math.floor(Math.random() * 100));
-                    return deferred.promise;
+                    return Promised.delay(Math.floor(Math.random() * 100)).then(_ => {
+                        return value;
+                    });
                 };
             }
 
-            for (var i = 0; i < values.length; i++) {
+            for (let i = 0; i < values.length; i++) {
                 tasks.push(createTask(values[i]));
             }
 
-            Qed.allLimit(tasks, 2).then(function(results) {
+            Promised.allLimit(tasks, 2).then(function(results) {
                 results.should.deep.equal(values);
-            }).done(done);
+            }).then(done);
         });
 
         it("should have limited concurrent workers", function() {
 
-            var tasks = [];
+            const tasks = [];
 
             function createTask(value) {
                 return function() {
                     workersCounter.inc();
-                    var deferred = Q.defer();
-                    setTimeout(function() {
-                        deferred.resolve(value);
+                    return Promised.delay(Math.floor(Math.random() * 100)).then(_ => {
                         workersCounter.dec();
-                    }, Math.floor(Math.random() * 100));
-                    return deferred.promise;
+                        return value;
+                    });
                 };
             }
 
-            for (var i = 0; i < values.length; i++) {
+            for (let i = 0; i < values.length; i++) {
                 tasks.push(createTask(values[i]));
             }
 
-            var limit = 10;
+            const limit = 10;
 
-            return Qed.allLimit(tasks, limit).then(function() {
+            return Promised.allLimit(tasks, limit).then(function() {
                 Math.max.apply(null, workersCounter.history).should.equal(limit);
             });
         });
     });
     describe("#retry()", function() {
         it("should succeed after trying 10 times", function() {
-            var nbAttempts = 0;
-            return Qed.tryPromise(function() {
+            let nbAttempts = 0;
+            return Promised.tryPromise(function() {
                 if (nbAttempts++ < 10) {
-                    return Promise.reject(new Error("Not ready yet"));
+                    return Promise.reject("Not ready yet");
                 }
             }, null, 10);
         });
 
-        it("should retry until success", function() {
+        it("should fail after failling 5 times", function(done) {
+            let nbAttempts = 0;
+            Promised.tryPromise(function() {
+                if (nbAttempts++ < 6) {
+                    return Promise.reject("Not ready yet");
+                }
+            }, null, 5).catch(function(err) {
+                if (err === "Not ready yet") {
+                    done();
+                } else {
+                    return Promise.reject(err);
+                }
+            });
+        });
 
-            var ctx = {ready: false};
+        it("should retry until success", function() {
+            let ctx = {ready: false};
             setTimeout(function() {
                 ctx.ready = true;
             }, 1800);
 
-            return Qed.tryPromise(function() {
+            return Promised.tryPromise(function() {
                 if (!ctx.ready) {
-                    return Promise.reject(new Error("Not ready yet"));
+                    return Promise.reject("Not ready yet");
                 }
             }, null, null, 100);
         });
     });
     describe("#httpGet", function() {
         it("should succeed to request GET http://eu.httpbin.org/", function() {
-            return Qed.httpGET(url.parse("http://eu.httpbin.org"));
+            return Promised.httpGET(url.parse("http://eu.httpbin.org"));
+        });
+
+        it("should succeed to request GET https://eu.httpbin.org/", function() {
+            return Promised.httpGET(url.parse("https://eu.httpbin.org"));
         });
     })
 });
