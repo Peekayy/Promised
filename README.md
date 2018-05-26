@@ -1,2 +1,2 @@
-# Qed
-Helper functions based on kriskowal/q.
+# Promised
+Promise functions toolbox project.
