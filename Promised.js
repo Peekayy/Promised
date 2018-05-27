@@ -2,12 +2,11 @@ module.exports = (function() {
     const http = require("http");
     const https = require("https");
     const util = require("util");
-    const extend = util._extend;
     const querystring = require("querystring");
     const fs = require("fs");
     const Crypto = require("crypto");
     const path = require("path");
-    const url = require("url");
+    const URL = require("url");
     let Promised;
 
     function debug() {
@@ -27,9 +26,9 @@ module.exports = (function() {
         const deferred = Promised.defer();
         const proxy = process.env.http_proxy || process.env.HTTP_PROXY;
         if (proxy) {
-            const proxyUrl = url.parse(proxy);
+            const proxyUrl = URL.parse(proxy);
             const path = reqParams.protocol + "//" + reqParams.host + reqParams.path;
-            extend(reqParams, proxyUrl);
+            Object.assign(reqParams, proxyUrl);
             reqParams.path = path;
         }
 
@@ -39,15 +38,12 @@ module.exports = (function() {
         } else if (reqParams.protocol === "https:") {
             requester = https;
         } else {
-            return Promise.reject(`Unsupported protocol '${reqParams.protocol}'`);
+            return Promise.reject(new Error(`Unsupported protocol '${reqParams.protocol}'`));
         }
 
-        const req = requester.request(extend({method: method}, reqParams), function(res) {
+        const req = requester.request(Object.assign({method: method}, reqParams), function(res) {
             if (res.statusCode < 200 || res.statusCode >= 300) {
-                deferred.reject({
-                    status: res.statusCode,
-                    message: res.statusMessage
-                });
+                deferred.reject(new Error(res.statusCode + " - " + res.statusMessage + " : " + reqParams.href));
             } else {
                 deferred.resolve(res);
             }
@@ -80,6 +76,11 @@ module.exports = (function() {
 
     Promised = {
         logger: console,
+        install: function() {
+            Promise.prototype.delay = function(delay) {
+                return this.then(e => Promised.delay(delay).then(_ => e));
+            };
+        },
         httpGET: function(reqParams) {
             return httpReq("GET", reqParams);
         },
@@ -151,12 +152,13 @@ module.exports = (function() {
 
                         return selectedStreams.reduce(function(chain, stream) {
                             return chain.then(function() {
-                                return url.parse(stream.properties.uri);
+                                return URL.parse(stream.properties.uri);
                             }).then(function(streamUrl) {
-                                return Promised.httpGET({
+                                let params = Object.assign({}, baseUrl, {
                                     hostname: streamUrl.hostname || (baseUrl && baseUrl.hostname),
-                                    path: (baseUrl && baseUrl.path || "") + streamUrl.path
+                                    path: (baseUrl && baseUrl.path && !streamUrl.path.includes(baseUrl.path) || "") + streamUrl.path
                                 });
+                                return Promised.httpGET(params);
                             }).then(Promised.httpResponseHandler.m3u8).then(m3u => {
                                 stream.content = m3u;
                                 return stream;
@@ -173,7 +175,7 @@ module.exports = (function() {
                     const tsFile = fs.createWriteStream(path);
 
                     tsFile.on("finish", function() {
-                        tsFile.close();
+                        tsFile.end();
                         deferred.resolve(path);
                     });
 
@@ -182,7 +184,7 @@ module.exports = (function() {
                     });
 
                     if (res.statusCode !== 200) {
-                        tsFile.close();
+                        tsFile.end();
                         res.socket.end();
                         deferred.reject("Couldn't get file '" + path + "' statusCode  : " + res.statusCode);
 
@@ -239,7 +241,7 @@ module.exports = (function() {
                 }
                 queues[i % maxParallelDownloads].push({url: urls[i], filename: filenames[i], index: i});
             }
-            return Promised.all(queues.map(function(queue) {
+            return Promise.all(queues.map(function(queue) {
                 return queue.reduce(function(chain, item) {
                     return chain.then(function() {
                         return Promised.downloadFile(item.url, item.filename, targetFolder);
@@ -247,6 +249,7 @@ module.exports = (function() {
                         item.filename = filename;
                     }).catch(function(err) {
                         item.error = err;
+                        return Promise.reject(err);
                     });
                 }, Promise.resolve());
             })).then(function() {
@@ -264,11 +267,7 @@ module.exports = (function() {
             if (targetFolder) {
                 filename = targetFolder + path.sep + filename;
             }
-
-            return Promised.tryPromise(Promised.httpGET, [{
-                hostname: url.host,
-                path: url.path
-            }], 10).then(Promised.httpResponseHandler.pipeToFile(filename));
+            return Promised.tryPromise(Promised.httpGET, [url], 10).then(Promised.httpResponseHandler.pipeToFile(filename));
         },
         fs: {
             mkdir: util.promisify(fs.mkdir),
@@ -310,7 +309,7 @@ module.exports = (function() {
             });
         },
         yql: function(query) {
-            let queryUrl = url.parse("https://query.yahooapis.com/v1/public/yql?q=" + encodeURIComponent(query) + "&format=json&callback=");
+            let queryUrl = URL.parse("https://query.yahooapis.com/v1/public/yql?q=" + encodeURIComponent(query) + "&format=json&callback=");
             return Promised.httpsGET(queryUrl).then(Promised.httpResponseHandler.json, (res) => {
                 throw new Error(res.statusCode + " - " + res.statusMessage);
             });
