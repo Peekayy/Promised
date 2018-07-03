@@ -57,6 +57,8 @@ module.exports = (function() {
             req.end();
         } else {
             switch (typeof data) {
+                case "object":
+                    data = JSON.stringify(data);
                 case "string" :
                     req.write(data);
                     req.end();
