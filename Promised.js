@@ -1,4 +1,4 @@
-module.exports = (function() {
+module.exports = (function () {
     const http = require("http");
     const https = require("https");
     const util = require("util");
@@ -7,6 +7,7 @@ module.exports = (function() {
     const Crypto = require("crypto");
     const path = require("path");
     const URL = require("url");
+    const zlib = require("zlib");
     let Promised;
 
     function debug() {
@@ -41,7 +42,7 @@ module.exports = (function() {
             return Promise.reject(new Error(`Unsupported protocol '${reqParams.protocol}'`));
         }
 
-        const req = requester.request(Object.assign({method: method}, reqParams), function(res) {
+        const req = requester.request(Object.assign({method: method}, reqParams), function (res) {
             if (res.statusCode < 200 || res.statusCode >= 300) {
                 deferred.reject(new Error(res.statusCode + " - " + res.statusMessage + " : " + reqParams.href));
             } else {
@@ -49,7 +50,7 @@ module.exports = (function() {
             }
         });
 
-        req.on("error", function(err) {
+        req.on("error", function (err) {
             deferred.reject(err);
         });
 
@@ -78,57 +79,70 @@ module.exports = (function() {
 
     Promised = {
         logger: console,
-        install: function() {
-            Promise.prototype.delay = function(delay) {
+        install: function () {
+            Promise.prototype.delay = function (delay) {
                 return this.then(e => Promised.delay(delay).then(_ => e));
             };
         },
-        httpGET: function(reqParams) {
+        httpGET: function (reqParams) {
             return httpReq("GET", reqParams);
         },
-        httpPOST: function(reqParams, data) {
+        httpPOST: function (reqParams, data) {
             return httpReq("POST", reqParams, data);
         },
-        httpHEAD: function(reqParams) {
+        httpHEAD: function (reqParams) {
             return httpReq("HEAD", reqParams);
         },
-        httpPUT: function(reqParams, data) {
+        httpPUT: function (reqParams, data) {
             return httpReq("PUT", reqParams, data);
         },
         httpResponseHandler: {
-            simpleData: function(res) {
+            simpleData: function (res) {
                 let data = "", deferred = Promised.defer();
-                res.on('data', function(chunk) {
+                res.on('data', function (chunk) {
                     data += chunk;
                 });
-                res.on('end', function() {
+                res.on('end', function () {
                     deferred.resolve(data);
                 });
                 return deferred.promise;
             },
-            buffer: function(res) {
+            buffer: function (res) {
                 const buffers = [], deferred = Promised.defer();
-                res.on('data', function(chunk) {
+                res.on('data', function (chunk) {
                     buffers.push(chunk);
                 });
-                res.on('end', function() {
+                res.on('end', function () {
                     deferred.resolve(Buffer.concat(buffers));
                 });
                 return deferred.promise;
             },
-            json: function(res) {
+            json: function (res) {
                 return Promised.httpResponseHandler.simpleData(res).then(data => JSON.parse(data));
             },
-            xml: function(res) {
+            xml: function (res) {
                 return Promised.httpResponseHandler.simpleData(res).then(Promised.parseXml);
             },
-            headers: function(res) {
+            headers: function (res) {
                 return Promise.resolve(res.headers);
             },
-            hls: function(mode, baseUrl) {
-                return function(res) {
-                    return Promised.httpResponseHandler.m3u8(res).then(function(m3u) {
-                        m3u.items.StreamItem.sort(function(a, b) {
+            gzip: function (res) {
+                return Promised.httpResponseHandler.buffer(res).then(data => {
+                    return new Promise((resolve, reject) => {
+                        zlib.gunzip(data, (err, gunzippedData) => {
+                            if (err) {
+                                reject(err);
+                            } else {
+                                resolve(gunzippedData);
+                            }
+                        });
+                    });
+                });
+            },
+            hls: function (mode, baseUrl) {
+                return function (res) {
+                    return Promised.httpResponseHandler.m3u8(res).then(function (m3u) {
+                        m3u.items.StreamItem.sort(function (a, b) {
                             return parseInt(a.attributes.attributes.bandwidth) - parseInt(b.attributes.attributes.bandwidth);
                         });
                         let selectedStreams;
@@ -152,10 +166,10 @@ module.exports = (function() {
                                 break;
                         }
 
-                        return selectedStreams.reduce(function(chain, stream) {
-                            return chain.then(function() {
+                        return selectedStreams.reduce(function (chain, stream) {
+                            return chain.then(function () {
                                 return URL.parse(stream.properties.uri);
-                            }).then(function(streamUrl) {
+                            }).then(function (streamUrl) {
                                 let params = Object.assign({}, baseUrl, {
                                     hostname: streamUrl.hostname || (baseUrl && baseUrl.hostname),
                                     path: (baseUrl && baseUrl.path && !streamUrl.path.includes(baseUrl.path) || "") + streamUrl.path
@@ -170,18 +184,18 @@ module.exports = (function() {
                     });
                 }
             },
-            pipeToFile: function(path) {
-                return function(res) {
+            pipeToFile: function (path) {
+                return function (res) {
                     const deferred = Promised.defer();
 
                     const tsFile = fs.createWriteStream(path);
 
-                    tsFile.on("finish", function() {
+                    tsFile.on("finish", function () {
                         tsFile.end();
                         deferred.resolve(path);
                     });
 
-                    tsFile.on("error", function(error) {
+                    tsFile.on("error", function (error) {
                         deferred.reject("Couldn't write " + path + ":" + error);
                     });
 
@@ -198,21 +212,21 @@ module.exports = (function() {
                 }
             }
         },
-        md5sum: function(filepath) {
+        md5sum: function (filepath) {
             const deferred = Promised.defer();
             const stream = fs.ReadStream(filepath);
             const md5 = Crypto.createHash("md5");
 
-            stream.on("data", function(data) {
+            stream.on("data", function (data) {
                 md5.update(data);
             });
-            stream.on("end", function() {
+            stream.on("end", function () {
                 deferred.resolve(md5.digest("hex"));
             });
 
             return deferred.promise;
         },
-        allLimit: function(tasks, limit) {
+        allLimit: function (tasks, limit) {
             const queues = [];
             const results = [];
 
@@ -223,15 +237,15 @@ module.exports = (function() {
                 queues[i % limit].push(tasks[i]);
             }
 
-            return Promise.all(queues.map(function(queue, queueIndex) {
-                return queue.reduce(function(chain, task, i) {
-                    return chain.then(task).then(function(result) {
+            return Promise.all(queues.map(function (queue, queueIndex) {
+                return queue.reduce(function (chain, task, i) {
+                    return chain.then(task).then(function (result) {
                         results[i * limit + queueIndex] = result;
                     });
                 }, Promise.resolve());
             })).then(_ => results);
         },
-        downloadFiles: function(urls, filenames, targetFolder, maxParallelDownloads) {
+        downloadFiles: function (urls, filenames, targetFolder, maxParallelDownloads) {
             if (!filenames) {
                 filenames = [];
             }
@@ -243,26 +257,26 @@ module.exports = (function() {
                 }
                 queues[i % maxParallelDownloads].push({url: urls[i], filename: filenames[i], index: i});
             }
-            return Promise.all(queues.map(function(queue) {
-                return queue.reduce(function(chain, item) {
-                    return chain.then(function() {
+            return Promise.all(queues.map(function (queue) {
+                return queue.reduce(function (chain, item) {
+                    return chain.then(function () {
                         return Promised.downloadFile(item.url, item.filename, targetFolder);
-                    }).then(function(filename) {
+                    }).then(function (filename) {
                         item.filename = filename;
-                    }).catch(function(err) {
+                    }).catch(function (err) {
                         item.error = err;
                         return Promise.reject(err);
                     });
                 }, Promise.resolve());
-            })).then(function() {
-                return queues.reduce(function(array, queue) {
+            })).then(function () {
+                return queues.reduce(function (array, queue) {
                     return array.concat(queue);
-                }, []).sort(function(a, b) {
+                }, []).sort(function (a, b) {
                     return a.index - b.index;
                 });
             });
         },
-        downloadFile: function(url, filename, targetFolder) {
+        downloadFile: function (url, filename, targetFolder) {
             if (!filename) {
                 filename = url.pathname.split("/").pop();
             }
@@ -283,18 +297,18 @@ module.exports = (function() {
             close: util.promisify(fs.close),
             stat: util.promisify(fs.stat),
             chmod: util.promisify(fs.chmod),
-            removeDirAndContents: function(dir) {
-                return Promised.fs.readdir(dir).then(function(files) {
-                    return Promise.all(files.map(function(file) {
+            removeDirAndContents: function (dir) {
+                return Promised.fs.readdir(dir).then(function (files) {
+                    return Promise.all(files.map(function (file) {
                         return Promised.fs.unlink(dir + path.sep + file);
                     }));
-                }).then(function() {
+                }).then(function () {
                     return Promised.fs.rmdir(dir);
                 });
             }
         },
-        tryPromise: function(f, args, maxTries, delay) {
-            return (f(args) || Promise.resolve()).catch(function(err) {
+        tryPromise: function (f, args, maxTries, delay) {
+            return (f(args) || Promise.resolve()).catch(function (err) {
                 debug("Error occurred", err);
                 if (maxTries || maxTries === 0) {
                     debug("Left attempts : " + maxTries);
@@ -302,7 +316,7 @@ module.exports = (function() {
                     debug("Retrying...");
                 }
                 if (maxTries || typeof maxTries !== "number") {
-                    return Promised.delay(delay || 0).then(function() {
+                    return Promised.delay(delay || 0).then(function () {
                         return Promised.tryPromise(f, args, maxTries ? maxTries - 1 : null, delay);
                     });
                 } else {
@@ -310,13 +324,13 @@ module.exports = (function() {
                 }
             });
         },
-        yql: function(query) {
+        yql: function (query) {
             let queryUrl = URL.parse("https://query.yahooapis.com/v1/public/yql?q=" + encodeURIComponent(query) + "&format=json&callback=");
             return Promised.httpsGET(queryUrl).then(Promised.httpResponseHandler.json, (res) => {
                 throw new Error(res.statusCode + " - " + res.statusMessage);
             });
         },
-        defer: function() {
+        defer: function () {
             let deferred = {};
             deferred.promise = new Promise((resolve, reject) => {
                 deferred.resolve = resolve;
@@ -324,7 +338,7 @@ module.exports = (function() {
             });
             return deferred;
         },
-        delay: function(delay) {
+        delay: function (delay) {
             const deferred = Promised.defer();
             setTimeout(_ => {
                 deferred.resolve();
@@ -335,10 +349,10 @@ module.exports = (function() {
 
     try {
         const prompt = require("prompt");
-        Promised.prompt = function(fields) {
+        Promised.prompt = function (fields) {
             prompt.start();
             const deferred = Promised.defer();
-            prompt.get(fields, function(err, results) {
+            prompt.get(fields, function (err, results) {
                 if (err) {
                     deferred.reject(err);
                 } else {
@@ -348,14 +362,14 @@ module.exports = (function() {
             return deferred.promise;
         }
     } catch (e) {
-        Promised.prompt = function() {
+        Promised.prompt = function () {
             throw new Error("Missing peer dependency 'prompt'");
         }
     }
 
     try {
         const m3u8 = require("m3u8");
-        Promised.httpResponseHandler.m3u8 = function(res) {
+        Promised.httpResponseHandler.m3u8 = function (res) {
             const deferred = Promised.defer();
             if (res.statusCode !== 200) {
                 deferred.reject("Couldn't get m3u8 playlist : " + res.statusCode);
@@ -363,14 +377,14 @@ module.exports = (function() {
                 const parser = m3u8.createStream();
                 res.pipe(parser);
 
-                parser.on("m3u", function(m3u) {
+                parser.on("m3u", function (m3u) {
                     deferred.resolve(m3u);
                 });
             }
             return deferred.promise;
         }
     } catch (e) {
-        Promised.httpResponseHandler.m3u8 = function() {
+        Promised.httpResponseHandler.m3u8 = function () {
             throw new Error("Missing peer dependency 'm3u8'");
         }
     }
@@ -382,9 +396,9 @@ module.exports = (function() {
             trim: true,
             normalize: true
         });
-        Promised.parseXml = function(string) {
+        Promised.parseXml = function (string) {
             const deferred = Promised.defer();
-            xml2js.parseString(string, function(err, result) {
+            xml2js.parseString(string, function (err, result) {
                 if (err) {
                     deferred.reject(err);
                 } else {
@@ -394,7 +408,7 @@ module.exports = (function() {
             return deferred.promise;
         };
     } catch (e) {
-        Promised.parseXml = function() {
+        Promised.parseXml = function () {
             throw new Error("Missing peer dependency 'xml2js'");
         }
     }

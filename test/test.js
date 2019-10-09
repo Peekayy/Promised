@@ -7,24 +7,24 @@ const values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1
 const workersCounter = {
     count: 0,
     history: [],
-    inc: function() {
+    inc: function () {
         this.count++;
         this.history.push(this.count);
     },
-    dec: function() {
+    dec: function () {
         this.count--;
         this.history.push(this.count);
     }
 };
 
-describe("Promised", function() {
-    describe("#allLimit()", function() {
+describe("Promised", function () {
+    describe("#allLimit()", function () {
 
-        it("should return an array of results in the same order", function(done) {
+        it("should return an array of results in the same order", function (done) {
             const tasks = [];
 
             function createTask(value) {
-                return function() {
+                return function () {
                     return Promised.delay(Math.floor(Math.random() * 100)).then(_ => {
                         return value;
                     });
@@ -35,17 +35,17 @@ describe("Promised", function() {
                 tasks.push(createTask(values[i]));
             }
 
-            Promised.allLimit(tasks, 2).then(function(results) {
+            Promised.allLimit(tasks, 2).then(function (results) {
                 results.should.deep.equal(values);
             }).then(done);
         });
 
-        it("should have limited concurrent workers", function() {
+        it("should have limited concurrent workers", function () {
 
             const tasks = [];
 
             function createTask(value) {
-                return function() {
+                return function () {
                     workersCounter.inc();
                     return Promised.delay(Math.floor(Math.random() * 100)).then(_ => {
                         workersCounter.dec();
@@ -60,28 +60,28 @@ describe("Promised", function() {
 
             const limit = 10;
 
-            return Promised.allLimit(tasks, limit).then(function() {
+            return Promised.allLimit(tasks, limit).then(function () {
                 Math.max.apply(null, workersCounter.history).should.equal(limit);
             });
         });
     });
-    describe("#retry()", function() {
-        it("should succeed after trying 10 times", function() {
+    describe("#retry()", function () {
+        it("should succeed after trying 10 times", function () {
             let nbAttempts = 0;
-            return Promised.tryPromise(function() {
+            return Promised.tryPromise(function () {
                 if (nbAttempts++ < 10) {
                     return Promise.reject("Not ready yet");
                 }
             }, null, 10);
         });
 
-        it("should fail after failling 5 times", function(done) {
+        it("should fail after failling 5 times", function (done) {
             let nbAttempts = 0;
-            Promised.tryPromise(function() {
+            Promised.tryPromise(function () {
                 if (nbAttempts++ < 6) {
                     return Promise.reject("Not ready yet");
                 }
-            }, null, 5).catch(function(err) {
+            }, null, 5).catch(function (err) {
                 if (err === "Not ready yet") {
                     done();
                 } else {
@@ -90,26 +90,37 @@ describe("Promised", function() {
             });
         });
 
-        it("should retry until success", function() {
+        it("should retry until success", function () {
             let ctx = {ready: false};
-            setTimeout(function() {
+            setTimeout(function () {
                 ctx.ready = true;
             }, 1800);
 
-            return Promised.tryPromise(function() {
+            return Promised.tryPromise(function () {
                 if (!ctx.ready) {
                     return Promise.reject("Not ready yet");
                 }
             }, null, null, 100);
         });
     });
-    describe("#httpGet", function() {
-        it("should succeed to request GET http://eu.httpbin.org/", function() {
+    describe("#httpGet", function () {
+        it("should succeed to request GET http://eu.httpbin.org/", function () {
             return Promised.httpGET(url.parse("http://eu.httpbin.org"));
         });
 
-        it("should succeed to request GET https://eu.httpbin.org/", function() {
+        it("should succeed to request GET https://eu.httpbin.org/", function () {
             return Promised.httpGET(url.parse("https://eu.httpbin.org"));
         });
-    })
+    });
+
+    describe("httpResponseHandlers", () => {
+        describe("gzip", () => {
+            it("should unzip gzipped data", async function () {
+                const response = await Promised.httpGET(url.parse("https://httpbin.org/gzip"));
+                let data = await Promised.httpResponseHandler.gzip(response);
+                data = JSON.parse(data);
+                data.gzipped.should.be.true;
+            });
+        });
+    });
 });
